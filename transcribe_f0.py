@@ -85,7 +85,7 @@ def compute_hcqt(audio_fpath=None, y=None, fs=None):
     return log_hcqt, freq_grid, time_grid
 
 
-def interp_hcqt(audio_fpath=None, y=None, fs=None):
+def interp_hcqt(audio_fpath=None, y=None, fs=None, return_grid=True):
     """Compute the harmonic CQT from a given audio file
 
     Parameters
@@ -121,9 +121,7 @@ def interp_hcqt(audio_fpath=None, y=None, fs=None):
                                     n_bins=n_bins_master,
                                     bins_per_octave=BINS_PER_OCTAVE))
 
-    freq_grid = librosa.cqt_frequencies(N_OCTAVES * BINS_PER_OCTAVE,
-                                        FMIN,
-                                        bins_per_octave=BINS_PER_OCTAVE)
+    
 
     freq_master = librosa.cqt_frequencies(n_bins_master, FMIN,
                                           bins_per_octave=BINS_PER_OCTAVE)
@@ -134,11 +132,18 @@ def interp_hcqt(audio_fpath=None, y=None, fs=None):
 
     log_hcqt = ((1.0/80.0) * librosa.core.amplitude_to_db(hcqt, ref=np.max)) + 1.0
 
-    time_grid = librosa.core.frames_to_time(
-        np.arange(log_hcqt.shape[-1]), sr=SR, hop_length=HOP_LENGTH
-    )
+    if return_grid:
+        freq_grid = librosa.cqt_frequencies(N_OCTAVES * BINS_PER_OCTAVE,
+                                            FMIN,
+                                            bins_per_octave=BINS_PER_OCTAVE)
 
-    return log_hcqt, freq_grid, time_grid
+        time_grid = librosa.core.frames_to_time(
+            np.arange(log_hcqt.shape[-1]), sr=SR, hop_length=HOP_LENGTH
+        )
+
+        return log_hcqt, freq_grid, time_grid
+    else:
+        return log_hcqt
 
 
 def bkld(y_true, y_pred):
@@ -151,7 +156,7 @@ def bkld(y_true, y_pred):
         axis=-1), axis=-1)
 
 
-def get_model():
+def get_model(full_model=False):
     """ Get model structure.
 
     Returns
@@ -177,116 +182,118 @@ def get_model():
     y_multif0 = Conv2D(
         1, (1, 1), padding='same', activation='sigmoid', name='multif0_presqueeze')(y4a_pitch)
     multif0 = Lambda(lambda x: K.squeeze(x, axis=3), name='multif0')(y_multif0)
+    if full_model:
+        y_mask = Multiply(name='mask')([y_multif0, y0])
+        y1_timbre = Conv2D(
+            512, (2, 3), padding='same', activation='relu', name='timbre_layer1')(y_mask)
+        y1a_timbre = BatchNormalization()(y1_timbre)
 
-    y_mask = Multiply(name='mask')([y_multif0, y0])
-    y1_timbre = Conv2D(
-        512, (2, 3), padding='same', activation='relu', name='timbre_layer1')(y_mask)
-    y1a_timbre = BatchNormalization()(y1_timbre)
+        y_concat = Concatenate(name='timbre_and_pitch')([y_multif0, y1a_timbre])
+        ya_concat = BatchNormalization()(y_concat)
 
-    y_concat = Concatenate(name='timbre_and_pitch')([y_multif0, y1a_timbre])
-    ya_concat = BatchNormalization()(y_concat)
+        y_mel_feat = Conv2D(
+            32, (3, 3), padding='same', activation='relu', name='melody_filters')(ya_concat) #32
+        ya_mel_feat = BatchNormalization()(y_mel_feat)
+        y_mel_feat2 = Conv2D(
+            32, (3, 3), padding='same', activation='relu', name='melody_filters2')(ya_mel_feat)#32
+        ya_mel_feat2 = BatchNormalization()(y_mel_feat2)
+        y_mel_feat3 = Conv2D(
+            8, (240, 1), padding='same', activation='relu', name='melody_filters3')(ya_mel_feat2) # 8
+        ya_mel_feat3 = BatchNormalization()(y_mel_feat3)
+        y_mel_feat4 = Conv2D(
+            16, (7, 7), padding='same', activation='relu', name='melody_filters4')(ya_mel_feat3) # 16
+        ya_mel_feat4 = BatchNormalization()(y_mel_feat4)
+        y_mel_feat5 = Conv2D(
+            16, (7, 7), padding='same', activation='relu', name='melody_filters5')(ya_mel_feat4) #16
+        ya_mel_feat5 = BatchNormalization()(y_mel_feat5)
 
-    y_mel_feat = Conv2D(
-        32, (3, 3), padding='same', activation='relu', name='melody_filters')(ya_concat) #32
-    ya_mel_feat = BatchNormalization()(y_mel_feat)
-    y_mel_feat2 = Conv2D(
-        32, (3, 3), padding='same', activation='relu', name='melody_filters2')(ya_mel_feat)#32
-    ya_mel_feat2 = BatchNormalization()(y_mel_feat2)
-    y_mel_feat3 = Conv2D(
-        8, (240, 1), padding='same', activation='relu', name='melody_filters3')(ya_mel_feat2) # 8
-    ya_mel_feat3 = BatchNormalization()(y_mel_feat3)
-    y_mel_feat4 = Conv2D(
-        16, (7, 7), padding='same', activation='relu', name='melody_filters4')(ya_mel_feat3) # 16
-    ya_mel_feat4 = BatchNormalization()(y_mel_feat4)
-    y_mel_feat5 = Conv2D(
-        16, (7, 7), padding='same', activation='relu', name='melody_filters5')(ya_mel_feat4) #16
-    ya_mel_feat5 = BatchNormalization()(y_mel_feat5)
+        y_bass_feat = Conv2D(
+            32, (3, 3), padding='same', activation='relu', name='bass_filters')(ya_concat) #32
+        ya_bass_feat = BatchNormalization()(y_bass_feat)
+        y_bass_feat2 = Conv2D(
+            32, (3, 3), padding='same', activation='relu', name='bass_filters2')(ya_bass_feat) #32
+        ya_bass_feat2 = BatchNormalization()(y_bass_feat2)
+        y_bass_feat3 = Conv2D(
+            8, (240, 1), padding='same', activation='relu', name='bass_filters3')(ya_bass_feat2) #8
+        ya_bass_feat3 = BatchNormalization()(y_bass_feat3)
+        y_bass_feat4 = Conv2D(
+            16, (7, 7), padding='same', activation='relu', name='bass_filters4')(ya_bass_feat3) #16
+        ya_bass_feat4 = BatchNormalization()(y_bass_feat4)
+        y_bass_feat5 = Conv2D(
+            16, (7, 7), padding='same', activation='relu', name='bass_filters5')(ya_bass_feat4) #16
+        ya_bass_feat5 = BatchNormalization()(y_bass_feat5)
 
-    y_bass_feat = Conv2D(
-        32, (3, 3), padding='same', activation='relu', name='bass_filters')(ya_concat) #32
-    ya_bass_feat = BatchNormalization()(y_bass_feat)
-    y_bass_feat2 = Conv2D(
-        32, (3, 3), padding='same', activation='relu', name='bass_filters2')(ya_bass_feat) #32
-    ya_bass_feat2 = BatchNormalization()(y_bass_feat2)
-    y_bass_feat3 = Conv2D(
-        8, (240, 1), padding='same', activation='relu', name='bass_filters3')(ya_bass_feat2) #8
-    ya_bass_feat3 = BatchNormalization()(y_bass_feat3)
-    y_bass_feat4 = Conv2D(
-        16, (7, 7), padding='same', activation='relu', name='bass_filters4')(ya_bass_feat3) #16
-    ya_bass_feat4 = BatchNormalization()(y_bass_feat4)
-    y_bass_feat5 = Conv2D(
-        16, (7, 7), padding='same', activation='relu', name='bass_filters5')(ya_bass_feat4) #16
-    ya_bass_feat5 = BatchNormalization()(y_bass_feat5)
+        y_vocal_feat = Conv2D(
+            32, (3, 3), padding='same', activation='relu', name='vocal_filters')(ya_concat) #32
+        ya_vocal_feat = BatchNormalization()(y_vocal_feat)
+        y_vocal_feat2 = Conv2D(
+            32, (3, 3), padding='same', activation='relu', name='vocal_filters2')(ya_vocal_feat) #32
+        ya_vocal_feat2 = BatchNormalization()(y_vocal_feat2)
+        y_vocal_feat3 = Conv2D(
+            8, (240, 1), padding='same', activation='relu', name='vocal_filters3')(ya_vocal_feat2) #8
+        ya_vocal_feat3 = BatchNormalization()(y_vocal_feat3)
+        y_vocal_feat4 = Conv2D(
+            16, (7, 7), padding='same', activation='relu', name='vocal_filters4')(ya_vocal_feat3) # 16
+        ya_vocal_feat4 = BatchNormalization()(y_vocal_feat4)
+        y_vocal_feat5 = Conv2D(
+            16, (7, 7), padding='same', activation='relu', name='vocal_filters5')(ya_vocal_feat4) #16
+        ya_vocal_feat5 = BatchNormalization()(y_vocal_feat5)
 
-    y_vocal_feat = Conv2D(
-        32, (3, 3), padding='same', activation='relu', name='vocal_filters')(ya_concat) #32
-    ya_vocal_feat = BatchNormalization()(y_vocal_feat)
-    y_vocal_feat2 = Conv2D(
-        32, (3, 3), padding='same', activation='relu', name='vocal_filters2')(ya_vocal_feat) #32
-    ya_vocal_feat2 = BatchNormalization()(y_vocal_feat2)
-    y_vocal_feat3 = Conv2D(
-        8, (240, 1), padding='same', activation='relu', name='vocal_filters3')(ya_vocal_feat2) #8
-    ya_vocal_feat3 = BatchNormalization()(y_vocal_feat3)
-    y_vocal_feat4 = Conv2D(
-        16, (7, 7), padding='same', activation='relu', name='vocal_filters4')(ya_vocal_feat3) # 16
-    ya_vocal_feat4 = BatchNormalization()(y_vocal_feat4)
-    y_vocal_feat5 = Conv2D(
-        16, (7, 7), padding='same', activation='relu', name='vocal_filters5')(ya_vocal_feat4) #16
-    ya_vocal_feat5 = BatchNormalization()(y_vocal_feat5)
+        y_piano_feat = Conv2D(
+            32, (3, 3), padding='same', activation='relu', name='piano_filters')(ya_concat) #32
+        ya_piano_feat = BatchNormalization()(y_piano_feat)
+        y_piano_feat2 = Conv2D(
+            32, (3, 3), padding='same', activation='relu', name='piano_filters2')(ya_piano_feat) #32
+        ya_piano_feat2 = BatchNormalization()(y_piano_feat2)
+        y_piano_feat3 = Conv2D(
+            8, (240, 1), padding='same', activation='relu', name='piano_filters3')(ya_piano_feat2) #8
+        ya_piano_feat3 = BatchNormalization()(y_piano_feat3)
+        y_piano_feat4 = Conv2D(
+            16, (7, 7), padding='same', activation='relu', name='piano_filters4')(ya_piano_feat3) # 16
+        ya_piano_feat4 = BatchNormalization()(y_piano_feat4)
+        y_piano_feat5 = Conv2D(
+            16, (7, 7), padding='same', activation='relu', name='piano_filters5')(ya_piano_feat4) #16
+        ya_piano_feat5 = BatchNormalization()(y_piano_feat5)
 
-    y_piano_feat = Conv2D(
-        32, (3, 3), padding='same', activation='relu', name='piano_filters')(ya_concat) #32
-    ya_piano_feat = BatchNormalization()(y_piano_feat)
-    y_piano_feat2 = Conv2D(
-        32, (3, 3), padding='same', activation='relu', name='piano_filters2')(ya_piano_feat) #32
-    ya_piano_feat2 = BatchNormalization()(y_piano_feat2)
-    y_piano_feat3 = Conv2D(
-        8, (240, 1), padding='same', activation='relu', name='piano_filters3')(ya_piano_feat2) #8
-    ya_piano_feat3 = BatchNormalization()(y_piano_feat3)
-    y_piano_feat4 = Conv2D(
-        16, (7, 7), padding='same', activation='relu', name='piano_filters4')(ya_piano_feat3) # 16
-    ya_piano_feat4 = BatchNormalization()(y_piano_feat4)
-    y_piano_feat5 = Conv2D(
-        16, (7, 7), padding='same', activation='relu', name='piano_filters5')(ya_piano_feat4) #16
-    ya_piano_feat5 = BatchNormalization()(y_piano_feat5)
+        y_guitar_feat = Conv2D(
+            32, (3, 3), padding='same', activation='relu', name='guitar_filters')(ya_concat) #32
+        ya_guitar_feat = BatchNormalization()(y_guitar_feat)
+        y_guitar_feat2 = Conv2D(
+            32, (3, 3), padding='same', activation='relu', name='guitar_filters2')(ya_guitar_feat) #32
+        ya_guitar_feat2 = BatchNormalization()(y_guitar_feat2)
+        y_guitar_feat3 = Conv2D(
+            8, (240, 1), padding='same', activation='relu', name='guitar_filters3')(ya_guitar_feat2) #8
+        ya_guitar_feat3 = BatchNormalization()(y_guitar_feat3)
+        y_guitar_feat4 = Conv2D(
+            16, (7, 7), padding='same', activation='relu', name='guitar_filters4')(ya_guitar_feat3) # 16
+        ya_guitar_feat4 = BatchNormalization()(y_guitar_feat4)
+        y_guitar_feat5 = Conv2D(
+            16, (7, 7), padding='same', activation='relu', name='guitar_filters5')(ya_guitar_feat4) #16
+        ya_guitar_feat5 = BatchNormalization()(y_guitar_feat5)
 
-    y_guitar_feat = Conv2D(
-        32, (3, 3), padding='same', activation='relu', name='guitar_filters')(ya_concat) #32
-    ya_guitar_feat = BatchNormalization()(y_guitar_feat)
-    y_guitar_feat2 = Conv2D(
-        32, (3, 3), padding='same', activation='relu', name='guitar_filters2')(ya_guitar_feat) #32
-    ya_guitar_feat2 = BatchNormalization()(y_guitar_feat2)
-    y_guitar_feat3 = Conv2D(
-        8, (240, 1), padding='same', activation='relu', name='guitar_filters3')(ya_guitar_feat2) #8
-    ya_guitar_feat3 = BatchNormalization()(y_guitar_feat3)
-    y_guitar_feat4 = Conv2D(
-        16, (7, 7), padding='same', activation='relu', name='guitar_filters4')(ya_guitar_feat3) # 16
-    ya_guitar_feat4 = BatchNormalization()(y_guitar_feat4)
-    y_guitar_feat5 = Conv2D(
-        16, (7, 7), padding='same', activation='relu', name='guitar_filters5')(ya_guitar_feat4) #16
-    ya_guitar_feat5 = BatchNormalization()(y_guitar_feat5)
+        y_melody = Conv2D(
+            1, (1, 1), padding='same', activation='sigmoid', name='melody_presqueeze')(ya_mel_feat5)
+        melody = Lambda(lambda x: K.squeeze(x, axis=3), name='melody')(y_melody)
 
-    y_melody = Conv2D(
-        1, (1, 1), padding='same', activation='sigmoid', name='melody_presqueeze')(ya_mel_feat5)
-    melody = Lambda(lambda x: K.squeeze(x, axis=3), name='melody')(y_melody)
+        y_bass = Conv2D(
+            1, (1, 1), padding='same', activation='sigmoid', name='bass_presqueeze')(ya_bass_feat5)
+        bass = Lambda(lambda x: K.squeeze(x, axis=3), name='bass')(y_bass)
 
-    y_bass = Conv2D(
-        1, (1, 1), padding='same', activation='sigmoid', name='bass_presqueeze')(ya_bass_feat5)
-    bass = Lambda(lambda x: K.squeeze(x, axis=3), name='bass')(y_bass)
+        y_vocal = Conv2D(
+            1, (1, 1), padding='same', activation='sigmoid', name='vocal_presqueeze')(ya_vocal_feat5)
+        vocal = Lambda(lambda x: K.squeeze(x, axis=3), name='vocal')(y_vocal)
 
-    y_vocal = Conv2D(
-        1, (1, 1), padding='same', activation='sigmoid', name='vocal_presqueeze')(ya_vocal_feat5)
-    vocal = Lambda(lambda x: K.squeeze(x, axis=3), name='vocal')(y_vocal)
+        y_piano = Conv2D(
+            1, (1, 1), padding='same', activation='sigmoid', name='piano_presqueeze')(ya_piano_feat5)
+        piano = Lambda(lambda x: K.squeeze(x, axis=3), name='piano')(y_piano)
 
-    y_piano = Conv2D(
-        1, (1, 1), padding='same', activation='sigmoid', name='piano_presqueeze')(ya_piano_feat5)
-    piano = Lambda(lambda x: K.squeeze(x, axis=3), name='piano')(y_piano)
+        y_guitar = Conv2D(
+            1, (1, 1), padding='same', activation='sigmoid', name='guitar_presqueeze')(ya_guitar_feat5)
+        guitar = Lambda(lambda x: K.squeeze(x, axis=3), name='guitar')(y_guitar)
 
-    y_guitar = Conv2D(
-        1, (1, 1), padding='same', activation='sigmoid', name='guitar_presqueeze')(ya_guitar_feat5)
-    guitar = Lambda(lambda x: K.squeeze(x, axis=3), name='guitar')(y_guitar)
-
-    model = Model(inputs=y0, outputs=[multif0, melody, bass, vocal, piano, guitar])
+        model = Model(inputs=y0, outputs=[multif0, melody, bass, vocal, piano, guitar])
+    else:
+        model = Model(inputs=y0, outputs=multif0)
 
     model.compile(
         loss=bkld, metrics=['mse'], optimizer='adam'
@@ -295,7 +302,7 @@ def get_model():
     return model
 
 
-def load_model():
+def load_model(full_model=False):
     """Load the precompiled, pretrained model
 
     Returns
@@ -303,8 +310,11 @@ def load_model():
     model : Model
         Pretrained, precompiled Keras model
     """
-    model = get_model()
-    weights_path = os.path.join('weights', 'model_weights.h5')
+    model = get_model(full_model=full_model)
+    if full_model:
+        weights_path = os.path.join('weights', 'model_weights.h5')
+    else:
+        weights_path = os.path.join('weights', 'multif0.h5')
     if not os.path.exists(weights_path):
         raise IOError(
             "Cannot find weights path {}".format(weights_path))
@@ -365,7 +375,7 @@ def get_single_test_prediction(model, input_hcqt, max_frames=None):
     return predicted_output
 
 
-def compute_output(hcqt, time_grid, freq_grid, max_frames=None):
+def compute_output(hcqt, time_grid, freq_grid, max_frames=None, full_model=False, model=None):
     """Comput output for a given task
 
     Parameters
@@ -386,16 +396,21 @@ def compute_output(hcqt, time_grid, freq_grid, max_frames=None):
         Dictionary with task labels as keys and
         salience numpy arrays as values.
     """
-    model = load_model()
+    if model == None:
+        print('loading new model...')
+        model = load_model(full_model=full_model)
 
     print("Computing salience...")
     output_array = get_single_test_prediction(
         model, hcqt, max_frames=max_frames)
 
-    output_dict = {}
-    for task, i in TASK_INDICES.items():
-        output_dict[task] = output_array[i]
-
+    if full_model:
+        output_dict = {}
+        for task, i in TASK_INDICES.items():
+            output_dict[task] = output_array[i]
+    else:
+        output_dict = {'multif0': output_array[0]}
+    
     return output_dict
 
 
